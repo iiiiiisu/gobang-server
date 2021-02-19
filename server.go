@@ -10,53 +10,6 @@ import (
 	"time"
 )
 
-type Role uint8
-
-const (
-	WATCHER Role = iota
-	BLACK
-	WHITE
-)
-
-const (
-	WAITTING = "WAITTING"
-	PLAYING  = "PLAYING"
-)
-
-type RequestMsg struct {
-	Cmd  string `json:"cmd"`
-	Data string `json:"data"`
-}
-
-type ResponseMsg struct {
-	Msg    string `json:"msg"`
-	Result string `json:"result"`
-}
-
-type Player struct {
-	conn *net.TCPConn
-	Name string
-	Role Role
-}
-
-func (p *Player) Init(conn *net.TCPConn, name string) {
-	p.conn = conn
-	p.Name = name
-}
-
-func (p *Player) Send(msg []byte) (int, error) {
-	return p.conn.Write(msg)
-}
-
-type Room struct {
-	Id      int       `json:"id"`
-	Name    string    `json:"name"`
-	Players []*Player `json:"players"`
-	White   *Player   `json:"white"`
-	Black   *Player   `json:"black"`
-	State   string    `json:"state"`
-}
-
 type Server struct {
 	Name      string
 	IPVersion string
@@ -122,7 +75,7 @@ func (s *Server) Run() {
 func (s *Server) handler(conn *net.TCPConn) {
 	chess := new(Chess)
 	player := new(Player)
-	player.Init(conn, "")
+	player.Init(conn)
 	for {
 		buf := make([]byte, 2048)
 		cnt, err := conn.Read(buf)
@@ -139,7 +92,6 @@ func (s *Server) handler(conn *net.TCPConn) {
 		if err := json.Unmarshal(buf[:cnt], msg); err != nil {
 			log.Println(err)
 		}
-		log.Println(msg.Cmd)
 		switch strings.ToUpper(msg.Cmd) {
 		case "PING":
 			r := &ResponseMsg{
@@ -167,19 +119,25 @@ func (s *Server) handler(conn *net.TCPConn) {
 			}
 			msg, _ := json.Marshal(r)
 			player.Send(msg)
+		case "CREATE ROOM":
+			room := new(Room)
+			room.Init(player)
+			result, _ := json.Marshal(room)
+			r := &ResponseMsg{
+				Msg:    "ROOM",
+				Result: string(result),
+			}
+			msg, _ := json.Marshal(r)
+			player.Send(msg)
 		case "JOIN ROOM":
 			var data map[string]int
 			json.Unmarshal([]byte(msg.Data), &data)
 			id := data["id"]
 			log.Println(id)
 			if r, ok := s.Rooms[id]; ok {
-				if r.Black == nil {
-					r.Black = player
-				} else if r.White == nil {
-					r.White = player
-				}
+				r.Join(player)
 				resp := &ResponseMsg{
-					Msg: "JOIN ROOM",
+					Msg: "ROOM",
 				}
 				info := fmt.Sprintf("%d, %s, %s\n", r.Id, r.Name, r.State)
 				if r.Black != nil {
@@ -204,10 +162,16 @@ func (s *Server) handler(conn *net.TCPConn) {
 			if data.Turn[0] == chess.Turn {
 				chess.PlacePiece(int(data.PosX), int(data.PoxY))
 			}
+		case "CHANGE NAME":
+			player.Name = msg.Data
 		default:
 			log.Println(msg)
 		}
 	}
+}
+
+func (s *Server) Deal(msg *RequestMsg) {
+
 }
 
 func (s *Server) addRoom(r *Room) {
